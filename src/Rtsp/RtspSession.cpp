@@ -1,9 +1,9 @@
 ﻿/*
- * Copyright (c) 2016 The ZLMediaKit project authors. All Rights Reserved.
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
  *
- * This file is part of ZLMediaKit(https://github.com/xia-chu/ZLMediaKit).
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
  *
- * Use of this source code is governed by MIT license that can be found in the
+ * Use of this source code is governed by MIT-like license that can be found in the
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
@@ -55,8 +55,6 @@ RtspSession::RtspSession(const Socket::Ptr &sock) : Session(sock) {
     GET_CONFIG(uint32_t,keep_alive_sec,Rtsp::kKeepAliveSecond);
     sock->setSendTimeOutSecond(keep_alive_sec);
 }
-
-RtspSession::~RtspSession() = default;
 
 void RtspSession::onError(const SockException &err) {
     bool is_player = !_push_src_ownership;
@@ -130,8 +128,10 @@ void RtspSession::onRecv(const Buffer::Ptr &buf) {
 void RtspSession::onWholeRtspPacket(Parser &parser) {
     string method = parser.method(); //提取出请求命令字
     _cseq = atoi(parser["CSeq"].data());
-    if (_content_base.empty() && method != "GET") {
-        _content_base = parser.url();
+    if (_content_base.empty() && method != "GET" && method != "POST" ) {
+        RtspUrl rtsp;
+        rtsp.parse(parser.url());
+        _content_base = rtsp._url;
         _media_info.parse(parser.fullUrl());
         _media_info.schema = RTSP_SCHEMA;
     }
@@ -677,17 +677,17 @@ void RtspSession::handleReq_Setup(const Parser &parser) {
 
     switch (_rtp_type) {
     case Rtsp::RTP_TCP: {
-        if(_push_src){
-            //rtsp推流时，interleaved由推流者决定
-            auto key_values =  Parser::parseArgs(parser["Transport"],";","=");
-            int interleaved_rtp = -1 , interleaved_rtcp = -1;
-            if(2 == sscanf(key_values["interleaved"].data(),"%d-%d",&interleaved_rtp,&interleaved_rtcp)){
+        if (_push_src) {
+            // rtsp推流时，interleaved由推流者决定
+            auto key_values = Parser::parseArgs(parser["Transport"], ";", "=");
+            int interleaved_rtp = -1, interleaved_rtcp = -1;
+            if (2 == sscanf(key_values["interleaved"].data(), "%d-%d", &interleaved_rtp, &interleaved_rtcp)) {
                 trackRef->_interleaved = interleaved_rtp;
-            }else{
+            } else {
                 throw SockException(Err_shutdown, "can not find interleaved when setup of rtp over tcp");
             }
-        }else{
-            //rtsp播放时，由于数据共享分发，所以interleaved必须由服务器决定
+        } else {
+            // rtsp播放时，由于数据共享分发，所以interleaved必须由服务器决定
             trackRef->_interleaved = 2 * trackRef->_type;
         }
         sendRtspResponse("200 OK",
@@ -742,7 +742,7 @@ void RtspSession::handleReq_Setup(const Parser &parser) {
         break;
     case Rtsp::RTP_MULTICAST: {
         if(!_multicaster){
-            _multicaster = RtpMultiCaster::get(*this, get_local_ip(), _media_info.vhost, _media_info.app, _media_info.stream, _multicast_ip, _multicast_video_port, _multicast_audio_port);
+            _multicaster = RtpMultiCaster::get(*this, get_local_ip(), _media_info, _multicast_ip, _multicast_video_port, _multicast_audio_port);
             if (!_multicaster) {
                 send_NotAcceptable();
                 throw SockException(Err_shutdown, "can not get a available udp multicast socket");
@@ -833,7 +833,7 @@ void RtspSession::handleReq_Play(const Parser &parser) {
 
         rtp_info << "url=" << track->getControlUrl(_content_base) << ";"
                  << "seq=" << track->_seq << ";"
-                 << "rtptime=" << (int) (track->_time_stamp * (track->_samplerate / 1000)) << ",";
+                 << "rtptime=" << (int64_t)(track->_time_stamp) * (int64_t)(track->_samplerate/ 1000) << ",";
     }
 
     rtp_info.pop_back();
@@ -1136,7 +1136,7 @@ int RtspSession::getTrackIndexByTrackType(TrackType type) {
 
 int RtspSession::getTrackIndexByControlUrl(const string &control_url) {
     for (size_t i = 0; i < _sdp_track.size(); ++i) {
-        if (control_url == _sdp_track[i]->getControlUrl(_content_base)) {
+        if (control_url.find(_sdp_track[i]->getControlUrl(_content_base)) == 0) {
             return i;
         }
     }
@@ -1193,6 +1193,10 @@ void RtspSession::updateRtcpContext(const RtpPacket::Ptr &rtp){
     int track_index = getTrackIndexByTrackType(rtp->type);
     auto &rtcp_ctx = _rtcp_context[track_index];
     rtcp_ctx->onRtp(rtp->getSeq(), rtp->getStamp(), rtp->ntp_stamp, rtp->sample_rate, rtp->size() - RtpPacket::kRtpTcpHeaderSize);
+    if (!rtp->ntp_stamp && !rtp->getStamp()) {
+        // 忽略时间戳都为0的rtp
+        return;
+    }
 
     auto &ticker = _rtcp_send_tickers[track_index];
     //send rtcp every 5 second

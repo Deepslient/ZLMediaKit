@@ -10,9 +10,11 @@
 
 namespace SRT {
 #define SRT_FIELD "srt."
-// srt 超时时间
+// srt 超时时间  [AUTO-TRANSLATED:7828ddb5]
+// SRT timeout time
 const std::string kTimeOutSec = SRT_FIELD "timeoutSec";
-// srt 单端口udp服务器
+// srt 单端口udp服务器  [AUTO-TRANSLATED:af5210db]
+// SRT single-port UDP server
 const std::string kPort = SRT_FIELD "port";
 const std::string kLatencyMul = SRT_FIELD "latencyMul";
 const std::string kPktBufSize = SRT_FIELD "pktBufSize";
@@ -61,7 +63,7 @@ void SrtTransport::switchToOtherTransport(uint8_t *buf, int len, uint32_t socket
     BufferRaw::Ptr tmp = BufferRaw::create();
     struct sockaddr_storage tmp_addr = *addr;
     tmp->assign((char *)buf, len);
-    auto trans = SrtTransportManager::Instance().getItem(std::to_string(socketid));
+    auto trans = SrtTransportManager::Instance().getItem(socketid);
     if (trans) {
         trans->getPoller()->async([tmp, tmp_addr, trans] {
             trans->inputSockData((uint8_t *)tmp->data(), tmp->size(), (struct sockaddr_storage *)&tmp_addr);
@@ -107,7 +109,8 @@ void SrtTransport::inputSockData(uint8_t *buf, int len, struct sockaddr_storage 
         s_control_functions.emplace(ControlPacket::USERDEFINEDTYPE, &SrtTransport::handleUserDefinedType);
     });
     _now = SteadyClock::now();
-    // 处理srt数据
+    // 处理srt数据  [AUTO-TRANSLATED:b8b065b8]
+    // Handling SRT data
     if (DataPacket::isDataPacket(buf, len)) {
         uint32_t socketId = DataPacket::getSocketID(buf, len);
         if (socketId == _socket_id) {
@@ -203,7 +206,7 @@ void SrtTransport::handleHandshakeInduction(HandshakePacket &pkt, struct sockadd
     res->srt_socket_id = _peer_socket_id;
     res->syn_cookie = HandshakePacket::generateSynCookie(addr, _start_timestamp);
     _sync_cookie = res->syn_cookie;
-    memcpy(res->peer_ip_addr, pkt.peer_ip_addr, sizeof(pkt.peer_ip_addr) * sizeof(pkt.peer_ip_addr[0]));
+    memcpy(res->peer_ip_addr, pkt.peer_ip_addr, sizeof(pkt.peer_ip_addr));
     _handleshake_res = res;
     res->storeToData();
 
@@ -492,7 +495,8 @@ void SrtTransport::handleACKACK(uint8_t *buf, int len, struct sockaddr_storage *
             // clear data
             for(auto it = _ack_send_timestamp.begin(); it != _ack_send_timestamp.end();){
                 if(DurationCountMicroseconds(_now-it->second)>5e6){
-                    // 超过五秒没有ackack 丢弃
+                    // 超过五秒没有ackack 丢弃  [AUTO-TRANSLATED:9626442f]
+                    // Discard if no ACK for more than five seconds
                     it = _ack_send_timestamp.erase(it);
                 }else{
                     it++;
@@ -700,30 +704,30 @@ void SrtTransport::sendPacket(Buffer::Ptr pkt, bool flush) {
     }
 }
 
-std::string SrtTransport::getIdentifier() {
+std::string SrtTransport::getIdentifier() const {
     return _selected_session ? _selected_session->getIdentifier() : "";
 }
 
 void SrtTransport::registerSelfHandshake() {
-    SrtTransportManager::Instance().addHandshakeItem(std::to_string(_sync_cookie), shared_from_this());
+    SrtTransportManager::Instance().addHandshakeItem(_sync_cookie, shared_from_this());
 }
 
 void SrtTransport::unregisterSelfHandshake() {
     if (_sync_cookie == 0) {
         return;
     }
-    SrtTransportManager::Instance().removeHandshakeItem(std::to_string(_sync_cookie));
+    SrtTransportManager::Instance().removeHandshakeItem(_sync_cookie);
 }
 
 void SrtTransport::registerSelf() {
     if (_socket_id == 0) {
         return;
     }
-    SrtTransportManager::Instance().addItem(std::to_string(_socket_id), shared_from_this());
+    SrtTransportManager::Instance().addItem(_socket_id, shared_from_this());
 }
 
 void SrtTransport::unregisterSelf() {
-    SrtTransportManager::Instance().removeItem(std::to_string(_socket_id));
+    SrtTransportManager::Instance().removeItem(_socket_id);
 }
 
 void SrtTransport::onShutdown(const SockException &ex) {
@@ -739,7 +743,7 @@ void SrtTransport::onShutdown(const SockException &ex) {
     }
 }
 
-size_t SrtTransport::getPayloadSize() {
+size_t SrtTransport::getPayloadSize() const {
     size_t ret = (_mtu - 28 - 16) / 188 * 188;
     return ret;
 }
@@ -792,15 +796,13 @@ SrtTransportManager &SrtTransportManager::Instance() {
     return s_instance;
 }
 
-void SrtTransportManager::addItem(const std::string &key, const SrtTransport::Ptr &ptr) {
+void SrtTransportManager::addItem(const uint32_t key, const SrtTransport::Ptr &ptr) {
     std::lock_guard<std::mutex> lck(_mtx);
     _map[key] = ptr;
 }
 
-SrtTransport::Ptr SrtTransportManager::getItem(const std::string &key) {
-    if (key.empty()) {
-        return nullptr;
-    }
+SrtTransport::Ptr SrtTransportManager::getItem(const uint32_t key) {
+    assert(key > 0);
     std::lock_guard<std::mutex> lck(_mtx);
     auto it = _map.find(key);
     if (it == _map.end()) {
@@ -809,25 +811,23 @@ SrtTransport::Ptr SrtTransportManager::getItem(const std::string &key) {
     return it->second.lock();
 }
 
-void SrtTransportManager::removeItem(const std::string &key) {
+void SrtTransportManager::removeItem(const uint32_t key) {
     std::lock_guard<std::mutex> lck(_mtx);
     _map.erase(key);
 }
 
-void SrtTransportManager::addHandshakeItem(const std::string &key, const SrtTransport::Ptr &ptr) {
+void SrtTransportManager::addHandshakeItem(const uint32_t key, const SrtTransport::Ptr &ptr) {
     std::lock_guard<std::mutex> lck(_handshake_mtx);
     _handshake_map[key] = ptr;
 }
 
-void SrtTransportManager::removeHandshakeItem(const std::string &key) {
+void SrtTransportManager::removeHandshakeItem(const uint32_t key) {
     std::lock_guard<std::mutex> lck(_handshake_mtx);
     _handshake_map.erase(key);
 }
 
-SrtTransport::Ptr SrtTransportManager::getHandshakeItem(const std::string &key) {
-    if (key.empty()) {
-        return nullptr;
-    }
+SrtTransport::Ptr SrtTransportManager::getHandshakeItem(const uint32_t key) {
+    assert(key > 0);
     std::lock_guard<std::mutex> lck(_handshake_mtx);
     auto it = _handshake_map.find(key);
     if (it == _handshake_map.end()) {
